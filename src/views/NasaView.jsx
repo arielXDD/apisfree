@@ -1,29 +1,65 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ExternalLink, ImageOff, RefreshCw, Sparkles } from 'lucide-react';
 import AnoAI from '../components/ui/animated-shader-background';
+
+const NASA_SPACE_FALLBACK_IMAGE = '/nasa-space.svg';
 
 const NASA_FALLBACK_APOD = {
   media_type: 'image',
   title: 'Universo en silencio',
   date: 'Hoy',
   copyright: 'NASA / respaldo local',
-  url: 'https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&w=1600&q=80',
+  url: NASA_SPACE_FALLBACK_IMAGE,
   explanation:
     'La API pública de NASA está limitada por la DEMO_KEY. Esta vista mantiene la experiencia activa con un respaldo visual y un mensaje claro para que no se rompa la pantalla. Si quieres evitar el límite, configura `VITE_NASA_API_KEY` en tu entorno.',
 };
+
+const IMAGE_URL_PATTERN = /\.(avif|gif|jpe?g|png|webp)(\?.*)?$/i;
+
+function looksLikeImageUrl(url) {
+  if (!url) return false;
+  return IMAGE_URL_PATTERN.test(url) || url.includes('/image/');
+}
+
+function getApodImageUrl(apod) {
+  if (!apod) return '';
+  const candidates = [apod.hdurl, apod.url, apod.thumbnail_url].filter(Boolean);
+
+  if (apod.media_type === 'image') {
+    return candidates.find(looksLikeImageUrl) || apod.hdurl || apod.url || '';
+  }
+
+  return [apod.thumbnail_url, apod.hdurl, apod.url].find(looksLikeImageUrl) || '';
+}
+
+function getEmbeddableVideoUrl(url) {
+  if (!url) return '';
+
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    if (hostname === 'youtube.com' || hostname === 'youtu.be' || hostname === 'player.vimeo.com') {
+      return url;
+    }
+  } catch {
+    return '';
+  }
+
+  return '';
+}
 
 export default function NasaView() {
   const [apod, setApod] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [usingFallback, setUsingFallback] = useState(false);
+  const [mediaFallbackActive, setMediaFallbackActive] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const apiKey = import.meta.env.VITE_NASA_API_KEY || 'DEMO_KEY';
-    const cacheKey = 'nasa-apod-cache-v1';
-    const cacheDateKey = 'nasa-apod-cache-date-v1';
+    const cacheKey = 'nasa-apod-cache-v2';
+    const cacheDateKey = 'nasa-apod-cache-date-v2';
     const today = new Date().toISOString().slice(0, 10);
 
     try {
@@ -41,7 +77,7 @@ export default function NasaView() {
       window.localStorage.removeItem(cacheDateKey);
     }
 
-    fetch(`https://api.nasa.gov/planetary/apod?api_key=${apiKey}`)
+    fetch(`https://api.nasa.gov/planetary/apod?api_key=${apiKey}&thumbs=true`)
       .then((res) => {
         if (!res.ok) {
           if (res.status === 429) {
@@ -58,6 +94,7 @@ export default function NasaView() {
         if (data.error) throw new Error(data.error.message);
         setApod(data);
         setUsingFallback(false);
+        setMediaFallbackActive(false);
         setLoading(false);
         try {
           window.localStorage.setItem(cacheKey, JSON.stringify(data));
@@ -70,6 +107,7 @@ export default function NasaView() {
         if (cancelled) return;
         setApod(NASA_FALLBACK_APOD);
         setUsingFallback(true);
+        setMediaFallbackActive(false);
         setError(err.message);
         setLoading(false);
       });
@@ -78,6 +116,11 @@ export default function NasaView() {
       cancelled = true;
     };
   }, []);
+
+  const imageUrl = getApodImageUrl(apod);
+  const displayImageUrl = imageUrl || NASA_SPACE_FALLBACK_IMAGE;
+  const showImageFallbackNotice = usingFallback || mediaFallbackActive || !imageUrl;
+  const videoUrl = apod?.media_type === 'video' ? getEmbeddableVideoUrl(apod.url) : '';
 
   return (
     <div className="container" style={{ position: 'relative', minHeight: '100vh', overflow: 'hidden' }}>
@@ -143,14 +186,46 @@ export default function NasaView() {
             </div>
           )}
 
-          {apod.media_type === 'image' ? (
+          {displayImageUrl ? (
             <div style={{ position: 'relative' }}>
               <img
-                src={apod.url}
+                src={displayImageUrl}
                 alt={apod.title}
+                onError={(event) => {
+                  if (event.currentTarget.dataset.fallbackApplied === 'true') return;
+                  event.currentTarget.dataset.fallbackApplied = 'true';
+                  event.currentTarget.src = NASA_SPACE_FALLBACK_IMAGE;
+                  setMediaFallbackActive(true);
+                }}
                 style={{ width: '100%', maxHeight: '600px', objectFit: 'cover', display: 'block' }}
               />
-              {usingFallback && (
+              {apod.media_type === 'video' && apod.url && (
+                <a
+                  href={apod.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    position: 'absolute',
+                    right: '1rem',
+                    bottom: '1rem',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.75rem 1rem',
+                    borderRadius: '999px',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    background: 'rgba(3, 7, 18, 0.72)',
+                    color: '#fff',
+                    textDecoration: 'none',
+                    backdropFilter: 'blur(16px)',
+                    fontWeight: 700,
+                  }}
+                >
+                  <ExternalLink size={16} />
+                  Abrir video
+                </a>
+              )}
+              {showImageFallbackNotice && (
                 <div
                   style={{
                     position: 'absolute',
@@ -177,21 +252,36 @@ export default function NasaView() {
                     }}
                   >
                     <Sparkles size={14} />
-                    Respaldo visual activo
+                    Imagen de ejemplo activa
                   </div>
-                  <div style={{ fontSize: '0.95rem', lineHeight: 1.6 }}>{NASA_FALLBACK_APOD.explanation}</div>
+                  <div style={{ fontSize: '0.95rem', lineHeight: 1.6 }}>
+                    La imagen oficial no pudo mostrarse. Se usa una imagen espacial de respaldo para que la vista no quede vacia.
+                  </div>
                 </div>
               )}
             </div>
-          ) : apod.media_type === 'video' ? (
+          ) : apod.media_type === 'video' && videoUrl ? (
             <iframe
-              src={apod.url}
+              src={videoUrl}
               title={apod.title}
               style={{ width: '100%', height: '500px', border: 'none' }}
               allowFullScreen
             />
           ) : (
-            <div style={{ padding: '2rem', textAlign: 'center' }}>Formato multimedia no soportado</div>
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#e2e8f0' }}>
+              <ImageOff size={44} style={{ margin: '0 auto 1rem', opacity: 0.75 }} />
+              <p style={{ marginBottom: '1rem' }}>La NASA no entregó una imagen directa para este APOD.</p>
+              {apod.url && (
+                <a
+                  href={apod.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: '#93c5fd', fontWeight: 700 }}
+                >
+                  Abrir contenido original
+                </a>
+              )}
+            </div>
           )}
 
           <div style={{ padding: '2rem' }}>
